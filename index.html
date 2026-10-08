@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dynasty Intelligence — Live</title>
+<style>
+:root{--bg:#eef1e8;--panel:#fff;--ink:#17261d;--mut:#5b695f;--line:#d3d9ca;--buy:#17703f;--sell:#bf3a22;--flag:#e0ae00;--head:#1f3d2b;--headink:#f1f4ea}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1913;--panel:#17251c;--ink:#e8eee4;--mut:#93a597;--line:#294032;--buy:#4cc782;--sell:#ff7a5c;--flag:#f2c230;--head:#0a120d;--headink:#e8eee4}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,"Segoe UI",sans-serif}
+header{background:var(--head);color:var(--headink);padding:16px 20px 0;border-bottom:4px solid var(--flag)}
+h1{font:700 28px/1 "Arial Narrow",Impact,sans-serif;margin:0 0 4px}
+#status{font-size:13px;opacity:.8;margin:0 0 10px}
+nav{display:flex;gap:2px}nav button{background:none;border:0;color:var(--headink);opacity:.65;padding:10px 16px;font:600 15px system-ui;cursor:pointer;border-bottom:3px solid transparent}
+nav button[aria-selected=true]{opacity:1;border-bottom-color:var(--flag)}
+main{max-width:1100px;margin:0 auto;padding:16px 20px}
+h2{font:700 21px "Arial Narrow",sans-serif;margin:22px 0 8px}h2:first-child{margin-top:0}
+.note{color:var(--mut);font-size:13px;margin:0 0 10px}
+.bar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+select,input[type=file]{padding:7px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);font:inherit}
+.wrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:6px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}th{font-size:12px;color:var(--mut);background:var(--bg)}tr:last-child td{border:0}
+.pos{font:600 11px sans-serif;padding:1px 6px;border-radius:3px;background:var(--head);color:var(--headink);margin-left:6px}
+.buy{color:var(--buy);font-weight:600}.sell{color:var(--sell);font-weight:600}.mut{color:var(--mut)}
+tr.me td{background:color-mix(in srgb,var(--flag) 18%,transparent)}
+.tools{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:13px;margin:0 0 10px;align-items:center}.tools a{color:var(--flag)}.tools button{background:var(--flag);color:#17261d;border:0;border-radius:5px;padding:5px 11px;font:600 13px system-ui;cursor:pointer}
+.err{background:var(--panel);border:1px solid var(--sell);border-radius:6px;padding:12px;margin:12px 0}
+</style></head><body>
+<header><h1>Dynasty Intelligence — Live</h1><p id="status">Starting…</p>
+<div class="tools" id="tools"></div><nav id="nav"></nav></header><main id="view"></main>
+<script>
+const LID="1312494451456757760";
+const now=new Date(),YEAR=now.getMonth()<2?now.getFullYear()-1:now.getFullYear();
+const NV="https://github.com/nflverse/nflverse-data/releases/download/";
+const URLS=["data/stats.csv",NV+"stats_player/stats_player_week_"+YEAR+".csv",NV+"player_stats/player_stats_"+YEAR+".csv"];
+const $=s=>document.querySelector(s),cl=(x,a=0,b=100)=>Math.max(a,Math.min(b,x)),n=x=>+x||0;
+const S={tab:"Players",pos:"ALL",own:"ALL",sort:"v0",me:null,teams:[],players:[],byId:{},week:0};
+const status=m=>$("#status").textContent=m;
+const J=async u=>{const r=await fetch(u,{cache:"no-store"});if(!r.ok)throw new Error(r.status+" "+u);return r.json()};
+
+function parseCSV(t){const rows=[];let row=[],f="",q=false;
+ for(let i=0;i<t.length;i++){const c=t[i];
+  if(q){if(c=='"'){if(t[i+1]=='"'){f+='"';i++}else q=false}else f+=c}
+  else if(c=='"')q=true;else if(c==","){row.push(f);f=""}
+  else if(c=="\n"){row.push(f);rows.push(row);row=[];f=""}else if(c!="\r")f+=c}
+ if(f||row.length){row.push(f);rows.push(row)}
+ const h=rows.shift();return rows.filter(r=>r.length==h.length).map(r=>Object.fromEntries(h.map((k,i)=>[k,r[i]])))}
+
+function aggregate(rows){
+ rows=rows.filter(r=>!r.season_type||r.season_type=="REG");
+ const tc={},lg={t:0,c:0,rf:0,sf:0},by={};
+ rows.forEach(r=>{const k=r.team+"|"+r.week;tc[k]=(tc[k]||0)+n(r.carries);
+  lg.t+=n(r.targets);lg.c+=n(r.carries);
+  lg.rf+=.5*n(r.receptions)+.1*n(r.receiving_yards)+6*n(r.receiving_tds);
+  lg.sf+=.1*n(r.rushing_yards)+6*n(r.rushing_tds);
+  (by[r.player_id]=by[r.player_id]||[]).push(r)});
+ const rpt=lg.rf/(lg.t||1),rpc=lg.sf/(lg.c||1),out={};
+ const avg=a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:0;
+ for(const id in by){const g=by[id].sort((a,b)=>n(a.week)-n(b.week)),N=g.length;
+  const rsh=r=>n(r.carries)/Math.max(1,tc[r.team+"|"+r.week]);
+  const f=r=>1.5*n(r.target_share)+.7*n(r.air_yards_share)+.9*rsh(r);
+  const sc=g.map(f),tgt=g.reduce((s,r)=>s+n(r.targets),0),car=g.reduce((s,r)=>s+n(r.carries),0);
+  const rec=avg(sc.slice(-2)),ear=sc.length>2?avg(sc.slice(0,-2)):rec;
+  out[id]={g:N,ppg:avg(g.map(r=>n(r.fantasy_points)+.5*n(r.receptions))),xppg:(tgt*rpt+car*rpc)/N,
+   ts:avg(g.map(r=>n(r.target_share))),ays:avg(g.map(r=>n(r.air_yards_share))),rs:avg(g.map(rsh)),
+   tpg:tgt/N,cpg:car/N,use:avg(sc),trend:(rec-ear)*100/.95,wk:n(g[N-1].week)}}
+ return out}
+
+function build(sl,st){
+ const own={};S.teams.forEach(t=>t.pl.forEach(id=>own[id]=t));
+ S.players=[];S.byId={};
+ for(const id in sl){const p=sl[id];
+  if(!["QB","RB","WR","TE"].includes(p.position))continue;
+  const s=st[p.gsis_id]||null;
+  if(!own[id]&&!(s&&(s.use>.12||s.ppg>=6)&&p.team))continue;
+  const z=s||{g:0,ppg:0,xppg:0,ts:0,ays:0,rs:0,tpg:0,cpg:0,use:0,trend:0};
+  const pos=p.position,age=p.age||25,pk={QB:28,RB:24,WR:25,TE:26}[pos],dc={QB:.035,RB:.09,WR:.06,TE:.06}[pos];
+  const cv=x=>x<pk?1-.04*(pk-x):1-dc*(x-pk);
+  const opp=pos=="QB"?cl(z.ppg*3.5):cl(100*z.use/.95);
+  const gap=pos=="QB"||!z.g?0:z.ppg-z.xppg;
+  const base=z.g?(opp*.55+z.ppg*2.2)*(pos=="QB"?.8:1):(age<23?35:28);
+  const brk=Math.round(cl(40+z.trend*2+(26-age)*2.5+Math.max(0,-gap)*4+(opp-50)*.3));
+  const sell=Math.round(cl(Math.max(0,gap)*8+Math.max(0,-z.trend)*2.5+Math.max(0,age-27)*3.5));
+  const pv=Math.round(cl(base)),m=S.mk&&S.mk[id]!=null?S.mk[id]:null,b2=m!=null?m:base;
+  const pr={id,name:p.full_name||(p.first_name+" "+p.last_name),pos,tm:p.team||"FA",age,own:own[id]||null,...z,opp,gap,brk,sell,pv,m,
+   v0:m!=null?m:pv,v1:Math.round(cl(b2*cv(age+1)/cv(age)+Math.max(0,brk-60)*.08)),v3:Math.round(cl(b2*cv(age+3)/cv(age)+Math.max(0,brk-60)*.15))};
+  S.players.push(pr);S.byId[id]=pr}}
+
+function power(){
+ const slots=S.league.roster_positions.filter(x=>["QB","RB","WR","TE","FLEX","SUPER_FLEX","REC_FLEX","WRRB_FLEX"].includes(x));
+ const E={FLEX:["RB","WR","TE"],WRRB_FLEX:["RB","WR"],REC_FLEX:["WR","TE"],SUPER_FLEX:["QB","RB","WR","TE"]};
+ S.teams.forEach(t=>{
+  const pl=t.pl.map(id=>S.byId[id]).filter(Boolean).sort((a,b)=>b.v0-a.v0),used=new Set(),start=[];
+  const take=el=>{const c=pl.find(p=>!used.has(p)&&el.includes(p.pos));if(c){used.add(c);start.push(c)}else start.push({pos:"-",v0:0})};
+  slots.filter(x=>!E[x]).forEach(x=>take([x]));slots.filter(x=>E[x]).forEach(x=>take(E[x]));
+  const bench=pl.filter(p=>!used.has(p));t.start=start;t.bench=bench;
+  t.ps={QB:0,RB:0,WR:0,TE:0};start.forEach(p=>{if(t.ps[p.pos]!==undefined)t.ps[p.pos]+=p.v0});
+  const sa=start.reduce((s,p)=>s+p.v0,0)/Math.max(1,start.length),ba=bench.slice(0,6).reduce((s,p)=>s+p.v0,0)/6;
+  t.age=pl.slice(0,12).reduce((s,p)=>s+p.age,0)/Math.max(1,Math.min(12,pl.length));
+  t.sc=Math.round(.7*sa+.2*ba+.1*cl(100-(t.age-22)*8))});
+ ["QB","RB","WR","TE"].forEach(k=>{const m=S.teams.reduce((s,t)=>s+t.ps[k],0)/S.teams.length;S.teams.forEach(t=>t.z=t.z||{});S.teams.forEach(t=>t.z[k]=m?t.ps[k]/m-1:0)});
+ S.teams.forEach(t=>{const ks=Object.keys(t.z).sort((a,b)=>t.z[a]-t.z[b]);t.need=t.z[ks[0]]<-.08?ks[0]:null;
+  const sp=["QB","RB","WR","TE"].map(k=>[k,(t.bench.find(p=>p.pos==k)||{v0:0}).v0]).sort((a,b)=>b[1]-a[1])[0];t.sur=sp[1]>=45?sp[0]:null;
+  const sa=t.start.reduce((s,p)=>s+p.v0,0)/Math.max(1,t.start.length);t.tag=sa>=60?"Contender":(t.age<25&&sa<50)?"Rebuilder":"Middle"})}
+
+const pn=p=>`${p.name}<span class=pos>${p.pos} ${p.tm}</span>`;
+const call=p=>p.sell>=55?["SELL","sell"]:(p.brk>=65||p.gap<=-3||(p.m!=null&&p.g>=3&&p.pv-p.m>=15))?["BUY","buy"]:["HOLD","mut"];
+const prof=p=>p.v3-p.v0>=6?["Ascending","buy"]:p.v3-p.v0<=-8?["Declining","sell"]:["Stable","mut"];
+const mine=p=>p.own&&S.me&&p.own.id==S.me?"me":"";
+const trend=t=>t>=3?`<span class=buy>↑ ${t.toFixed(0)}</span>`:t<=-3?`<span class=sell>↓ ${Math.abs(t).toFixed(0)}</span>`:"–";
+const ownN=p=>p.own?p.own.name:"<span class=mut>Free agent</span>";
+const table=(L,cols)=>`<div class=wrap><table><tr>${cols.map(c=>`<th>${c[0]}`).join("")}</tr>${L.map(p=>`<tr class="${mine(p)}">${cols.map(c=>`<td>${c[1](p)}`).join("")}`).join("")}</table></div>`;
+const C={pl:["Player",pn],ow:["Owner",ownN],age:["Age",p=>p.age],ppg:["PPG ½",p=>p.g?p.ppg.toFixed(1):"–"],x:["xPPG",p=>p.g&&p.pos!="QB"?p.xppg.toFixed(1):"–"],
+ ts:["Tgt%",p=>(p.ts*100).toFixed(0)],ays:["Air%",p=>(p.ays*100).toFixed(0)],rs:["Rush%",p=>(p.rs*100).toFixed(0)],opp:["Opp",p=>Math.round(p.opp)],tr:["Trend",p=>trend(p.trend)],
+ v0:["Dynasty",p=>p.v0],mk:["Market",p=>p.m==null?"–":p.m],pv:["Prod",p=>p.g?p.pv:"–"],v1:["1-yr",p=>p.v1],v3:["3-yr",p=>p.v3],pr:["Profile",p=>{const x=prof(p);return `<span class=${x[1]}>${x[0]}</span>`}],
+ cl:["Call",p=>{const x=call(p);return `<span class=${x[1]}>${x[0]}</span>`}],brk:["Breakout",p=>p.brk],sl:["Sell",p=>p.sell]};
+
+const V={
+ Players(){let L=S.players.filter(p=>(S.pos=="ALL"||p.pos==S.pos)&&(S.own=="ALL"||(S.own=="FA")==!p.own)&&(S.own!="MINE"||mine(p)));
+  if(S.own=="MINE")L=S.players.filter(p=>mine(p)&&(S.pos=="ALL"||p.pos==S.pos));
+  L=L.sort((a,b)=>b[S.sort]-a[S.sort]).slice(0,150);
+  const o=(v,l)=>`<option value="${v}">${l}`;
+  return `<div class=bar><select id=fp>${["ALL","QB","RB","WR","TE"].map(x=>o(x,x)).join("")}</select><select id=fo>${o("ALL","All players")+o("MINE","My roster")+o("FA","Free agents")}</select>
+  <select id=fs>${o("v0","Sort: dynasty value")+o("opp","Sort: opportunity")+o("ppg","Sort: PPG")+o("brk","Sort: breakout")+o("sell","Sort: sell score")+o("trend","Sort: usage trend")}</select></div>
+  <p class=note>Real stats through Week ${S.week}. Half-PPR. Dynasty = FantasyCalc market value (0-100) when available; Prod = a stats-only score from this season. Prod far above Market is a buy signal. xPPG is expected points from targets and carries at league-average efficiency. Showing top 150.</p>`+
+  table(L,[C.pl,C.ow,C.age,C.ppg,C.x,C.ts,C.ays,C.rs,C.opp,C.tr,C.mk,C.pv,C.v0,C.v1,C.v3,C.pr,C.cl])},
+ "Buy/Sell"(){const R=S.players.filter(p=>p.g>=2);
+  return `<h2>Breakout watch</h2><p class=note>Rising usage, young age, or production below expected volume.</p>`+table([...R].sort((a,b)=>b.brk-a.brk).slice(0,12),[C.pl,C.ow,C.age,C.ppg,C.x,C.opp,C.tr,C.brk])+
+  `<h2>Sell high</h2><p class=note>Points ahead of volume, falling usage, or age. Rostered players only.</p>`+table(R.filter(p=>p.own).sort((a,b)=>b.sell-a.sell).slice(0,12),[C.pl,C.ow,C.age,C.ppg,C.x,C.opp,C.tr,C.sl])+
+  `<h2>Waiver targets</h2><p class=note>Unrostered players in your league, best breakout score first.</p>`+table(R.filter(p=>!p.own).sort((a,b)=>b.brk-a.brk).slice(0,12),[C.pl,C.age,C.ppg,C.opp,C.tr,C.brk,C.v0])},
+ League(){const T=[...S.teams].sort((a,b)=>b.sc-a.sc),op=[];
+  T.forEach(a=>{if(a.sur)T.forEach(b=>{if(b!==a&&b.need==a.sur)op.push(`<li${a.id==S.me||b.id==S.me?" class=buy":""}>${a.name} has surplus ${a.sur}; ${b.name} needs ${b.need}.`)})});
+  return `<h2>Power board — ${S.league.name}</h2><div class=wrap><table><tr><th>Team<th>Power<th>Record<th>QB<th>RB<th>WR<th>TE<th>Avg age<th>Type<th>Needs<th>Surplus</tr>`+
+  T.map(t=>`<tr class="${t.id==S.me?"me":""}"><td>${t.name}<td><b>${t.sc}</b><td>${t.rec}<td>${t.ps.QB}<td>${t.ps.RB}<td>${t.ps.WR}<td>${t.ps.TE}<td>${t.age.toFixed(1)}<td>${t.tag}<td>${t.need||"–"}<td>${t.sur||"–"}`).join("")+`</table></div>
+  <p class=note>Position columns are summed starter values. Draft picks aren't included yet.</p><h2>Trade matches</h2>${op.length?`<ul>${op.slice(0,12).join("")}</ul>`:"<p class=note>No clear matches. See the Trades tab for specific offers.</p>"}`}
+};
+
+
+const FE={FLEX:["RB","WR","TE"],WRRB_FLEX:["RB","WR"],REC_FLEX:["WR","TE"],SUPER_FLEX:["QB","RB","WR","TE"]};
+function startSum(pl){
+ const slots=S.league.roster_positions.filter(x=>["QB","RB","WR","TE"].includes(x)||FE[x]);
+ const s=[...pl].sort((a,b)=>b.v0-a.v0),used=new Set();let sum=0;
+ const take=el=>{const c=s.find(p=>!used.has(p)&&el.includes(p.pos));if(c){used.add(c);sum+=c.v0}};
+ slots.filter(x=>!FE[x]).forEach(x=>take([x]));slots.filter(x=>FE[x]).forEach(x=>take(FE[x]));return sum}
+function findTrades(){
+ const me=S.teams.find(t=>t.id==S.me),mp=me.pl.map(id=>S.byId[id]).filter(Boolean),base=startSum(mp);
+ const give=mp.filter(p=>p.v0>=15),out=[],tg=[];
+ S.teams.forEach(b=>{if(b===me)return;const bp=b.pl.map(id=>S.byId[id]).filter(Boolean),bb=startSum(bp);
+  bp.filter(t=>t.v0>=25).forEach(t=>{
+   const up=startSum(mp.concat(t))-base;tg.push({t,up});if(up<=.5)return;
+   const test=gv=>{const r=gv.reduce((s,p)=>s+p.v0,0)/t.v0;
+    if(gv.length==1?(r<.85||r>1.15):(r<1||r>1.35))return;
+    const mu=startSum(mp.filter(p=>!gv.includes(p)).concat(t))-base;
+    const bu=startSum(bp.filter(p=>p!==t).concat(gv))-bb;
+    if(mu>.5&&bu>=0)out.push({b,t,gv,r,mu,bu})};
+   give.forEach(g=>test([g]));
+   for(let i=0;i<give.length;i++)for(let j=i+1;j<give.length;j++)test([give[i],give[j]])})});
+ out.sort((a,b)=>(b.mu+b.bu)-(a.mu+a.bu));const seen={},res=[];
+ out.forEach(o=>{seen[o.t.id]=(seen[o.t.id]||0)+1;if(seen[o.t.id]<=2&&res.length<15)res.push(o)});
+ return{tg:tg.sort((a,b)=>b.up-a.up).slice(0,15),res}}
+V.Trades=function(){
+ if(!S.me)return "<p class=note>Loading…</p>";
+ const me=S.teams.find(t=>t.id==S.me),{tg,res}=findTrades();
+ const nm=p=>`${p.name} <span class=mut>(${p.v0})</span>`;
+ return `<h2>Trade targets for ${me.name}</h2><p class=note>Players on other teams who would raise your starting lineup the most, by dynasty value. Upgrade is the gain in your lineup value if you added them.</p>`+
+ table(tg.map(x=>({...x.t,up:x.up})),[C.pl,C.ow,C.age,C.ppg,C.opp,C.tr,C.v0,["Upgrade",p=>"+"+p.up.toFixed(0)],C.cl])+
+ `<h2>Suggested trades</h2><p class=note>Each offer helps both lineups and is roughly fair by market value (1-for-1 within 15%, 2-for-1 at 100–135%). Whether a manager accepts is still their call.</p>`+
+ (res.length?`<div class=wrap><table><tr><th>Partner<th>You give<th>You get<th>Fairness<th>Your gain<th>Their gain</tr>${res.map(o=>`<tr><td>${o.b.name}<td>${o.gv.map(nm).join(" + ")}<td>${nm(o.t)}<td>${Math.round(o.r*100)}%<td class=buy>+${o.mu.toFixed(0)}<td>+${o.bu.toFixed(0)}`).join("")}</table></div>`:"<p class=note>No win-win trades found at current values.</p>");
+};
+
+function show(k){S.tab=k||S.tab;[...$("#nav").children].forEach(b=>b.setAttribute("aria-selected",b.textContent==S.tab));
+ $("#view").innerHTML=V[S.tab]();
+ [["fp","pos"],["fo","own"],["fs","sort"]].forEach(([id,key])=>{const e=$("#"+id);if(e){e.value=S[key];e.onchange=()=>{S[key]=e.value;show()}}})}
+
+function finish(sl,rows){const st=aggregate(rows);S.week=Math.max(...Object.values(st).map(x=>x.wk));
+ build(sl,st);power();show();status(`${S.league.name} • ${S.teams.length} teams • stats through Week ${S.week}, ${YEAR}${S.mk?"":" • market values unavailable, team needs unreliable"}`)}
+
+function exportCSV(){
+ const h=["name","pos","team","age","owner","games","ppg_half","xppg","target_share","air_yard_share","rush_share","opportunity","usage_trend","market","production","dynasty_now","dynasty_1yr","dynasty_3yr","breakout","sell"];
+ const q=v=>'"'+String(v==null?"":v).replace(/"/g,'""')+'"';
+ const L=[...S.players].sort((a,b)=>b.v0-a.v0).map(p=>[p.name,p.pos,p.tm,p.age,p.own?p.own.name:"FA",p.g,p.ppg.toFixed(2),p.xppg.toFixed(2),p.ts.toFixed(3),p.ays.toFixed(3),p.rs.toFixed(3),Math.round(p.opp),p.trend.toFixed(1),p.m,p.pv,p.v0,p.v1,p.v3,p.brk,p.sell].map(q).join(","));
+ const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([[h.join(",")].concat(L).join("\n")],{type:"text/csv"}));
+ a.download="dynasty-players-week"+S.week+".csv";a.click()}
+function setTools(){
+ const l=S.league,qb=l&&l.roster_positions.includes("SUPER_FLEX")?2:1,tn=l&&l.total_rosters||12,ppr=l&&l.scoring_settings&&l.scoring_settings.rec||.5;
+ $("#tools").innerHTML=`<button id="rf">↻ Refresh all data</button><button id="ex">⬇ Export player table (CSV)</button>
+ <span>Source files:</span><a href="${URLS[1]}">NFL weekly stats (CSV)</a><a href="${URLS[2]}">alt. stats file</a>
+ <a href="https://api.fantasycalc.com/values/current?isDynasty=true&numQbs=${qb}&numTeams=${tn}&ppr=${ppr}">Market values (JSON)</a>
+ <a href="https://api.sleeper.app/v1/league/${LID}/rosters">Sleeper rosters (JSON)</a>`;
+ $("#rf").onclick=()=>location.reload();$("#ex").onclick=()=>S.players.length?exportCSV():alert("Data is still loading.")}
+async function main(){
+ setTools();
+ const nav=$("#nav");["Players","Buy/Sell","Trades","League"].forEach(k=>{const b=document.createElement("button");b.textContent=k;b.onclick=()=>show(k);nav.appendChild(b)});
+ try{
+  status("Loading Sleeper league…");
+  const [lg,rs,us]=await Promise.all([J("https://api.sleeper.app/v1/league/"+LID),J("https://api.sleeper.app/v1/league/"+LID+"/rosters"),J("https://api.sleeper.app/v1/league/"+LID+"/users")]);
+  S.league=lg;setTools();const nm={};us.forEach(u=>nm[u.user_id]=(u.metadata&&u.metadata.team_name)||u.display_name);
+  S.teams=rs.map(r=>({id:r.roster_id,name:nm[r.owner_id]||"Team "+r.roster_id,pl:(r.players||[]).map(String),rec:r.settings.wins+"-"+r.settings.losses}));
+  try{S.me=+localStorage.getItem("me")||S.teams[0].id}catch(e){S.me=S.teams[0].id}
+  const sel=document.createElement("select");sel.innerHTML=S.teams.map(t=>`<option value="${t.id}">${t.name}`).join("");sel.value=S.me;
+  sel.onchange=()=>{S.me=+sel.value;try{localStorage.setItem("me",S.me)}catch(e){}show()};
+  const w=document.createElement("div");w.className="bar";w.innerHTML="<span style='font-size:13px'>Your team:</span>";w.appendChild(sel);$("header").insertBefore(w,nav);
+  status("Loading Sleeper player database (about 5 MB)…");
+  const sl=await J("https://api.sleeper.app/v1/players/nfl");
+  status("Loading market values…");
+  try{const l=S.league,qb=l.roster_positions.includes("SUPER_FLEX")?2:1,ppr=(l.scoring_settings&&l.scoring_settings.rec)||.5;
+   const m=await J("data/market.json").catch(()=>J(`https://api.fantasycalc.com/values/current?isDynasty=true&numQbs=${qb}&numTeams=${l.total_rosters||12}&ppr=${ppr}`));
+   const mx=Math.max(...m.map(x=>x.value));S.mk={};m.forEach(x=>{if(x.player&&x.player.sleeperId)S.mk[x.player.sleeperId]=Math.round(100*x.value/mx)});
+   if(Object.keys(S.mk).length<50)S.mk=null}catch(e){S.mk=null}
+  status("Loading nflverse stats…");
+  let rows=null;
+  for(const u of URLS){try{const r=await fetch(u,{cache:"no-store"});if(r.ok){rows=parseCSV(await r.text());break}}catch(e){}}
+  if(rows&&rows.length)return finish(sl,rows);
+  $("#view").innerHTML=`<div class=err><b>Couldn't download the stats file automatically.</b><br>Download it from <a href="${URLS[1]}">this link</a> (or <a href="${URLS[2]}">this one</a>), then choose it here:<br><br><input type=file id=csv accept=".csv"></div>`;
+  status("Waiting for stats file");
+  $("#csv").onchange=async e=>finish(sl,parseCSV(await e.target.files[0].text()));
+ }catch(e){$("#view").innerHTML=`<div class=err><b>Load failed:</b> ${e.message}<br>Check your connection, then reload.</div>`;status("Error")}
+}
+main();
+</script></body></html>
